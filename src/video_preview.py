@@ -7,19 +7,32 @@ import subprocess
 import sys
 import tempfile
 
+# Suppress the console window that Windows spawns for child processes
+# when the parent is a GUI-only app (no console attached).
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
 
 class PreviewError(RuntimeError):
     """Raised on any user-facing error so callers can handle it without sys.exit."""
 
 
-def _run_cmd(cmd):
-    result = subprocess.run(cmd, capture_output=True, text=True,
-                            encoding="utf-8", errors="replace")
-    if result.returncode != 0:
+def _run_cmd(cmd, stop_event=None):
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, encoding="utf-8", errors="replace",
+                            creationflags=_NO_WINDOW)
+    while True:
+        try:
+            _, stderr = proc.communicate(timeout=0.2)
+            break
+        except subprocess.TimeoutExpired:
+            if stop_event and stop_event.is_set():
+                proc.kill()
+                proc.communicate()
+                raise PreviewError("已停止")
+    if proc.returncode != 0:
         raise PreviewError(
-            f"Command failed: {' '.join(cmd)}\n{result.stderr.strip()}"
+            f"Command failed: {' '.join(cmd)}\n{stderr.strip()}"
         )
-    return result
 
 
 def get_video_duration(input_path, ffprobe_bin):
@@ -29,7 +42,8 @@ def get_video_duration(input_path, ffprobe_bin):
            "-of", "csv=p=0",
            input_path]
     result = subprocess.run(cmd, capture_output=True, text=True,
-                            encoding="utf-8", errors="replace")
+                            encoding="utf-8", errors="replace",
+                            creationflags=_NO_WINDOW)
     if result.returncode != 0:
         raise PreviewError(
             f"ffprobe failed on '{input_path}':\n{result.stderr.strip()}"
@@ -45,7 +59,8 @@ def get_video_duration(input_path, ffprobe_bin):
 
 def validate_ffmpeg(ffmpeg_bin, ffprobe_bin):
     for name, path in [("ffmpeg", ffmpeg_bin), ("ffprobe", ffprobe_bin)]:
-        result = subprocess.run([path, "-version"], capture_output=True)
+        result = subprocess.run([path, "-version"], capture_output=True,
+                                creationflags=_NO_WINDOW)
         if result.returncode != 0:
             raise PreviewError(
                 f"'{path}' not found or not executable. "
@@ -61,7 +76,7 @@ def build_output_path(input_path, output_arg):
     return f"{base}_preview{ext}"
 
 
-def extract_segment(ffmpeg_bin, input_path, start, duration, output_path):
+def extract_segment(ffmpeg_bin, input_path, start, duration, output_path, stop_event=None):
     _run_cmd([
         ffmpeg_bin, "-y",
         "-ss", str(start),
@@ -70,10 +85,10 @@ def extract_segment(ffmpeg_bin, input_path, start, duration, output_path):
         "-c", "copy",
         "-avoid_negative_ts", "make_zero",
         output_path,
-    ])
+    ], stop_event)
 
 
-def concat_segments(ffmpeg_bin, segment_paths, output_path):
+def concat_segments(ffmpeg_bin, segment_paths, output_path, stop_event=None):
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt",
                                      delete=False, encoding="utf-8") as f:
         list_file = f.name
@@ -86,7 +101,7 @@ def concat_segments(ffmpeg_bin, segment_paths, output_path):
             "-i", list_file,
             "-c", "copy",
             output_path,
-        ])
+        ], stop_event)
     finally:
         os.unlink(list_file)
 
@@ -101,6 +116,7 @@ def generate_preview(
     ffmpeg_path="ffmpeg",
     log=None,
     on_progress=None,
+    stop_event=None,
 ):
     """
     Core logic — importable by the GUI.
@@ -176,14 +192,17 @@ def generate_preview(
     segment_files = []
     try:
         for i, start in enumerate(segment_starts):
+            if stop_event and stop_event.is_set():
+                raise PreviewError("已停止")
             seg_path = os.path.join(tmpdir, f"seg_{i:03d}.mp4")
             log(f"  Extracting segment {i + 1}/{segments} at {start:.2f}s ...")
-            extract_segment(ffmpeg_bin, input_path, start, segment_duration, seg_path)
+            extract_segment(ffmpeg_bin, input_path, start, segment_duration, seg_path,
+                            stop_event)
             segment_files.append(seg_path)
             on_progress((i + 1) * seg_step)
 
         log("\n  Concatenating segments ...")
-        concat_segments(ffmpeg_bin, segment_files, output_path)
+        concat_segments(ffmpeg_bin, segment_files, output_path, stop_event)
         on_progress(100.0)
     finally:
         for f in segment_files:
