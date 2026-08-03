@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pyinstaller tkinterdnd2
+
+      - name: Locate tkinterdnd2 data path
+        id: tkdnd
+        shell: pwsh
+        run: |
+          $path = python -c "import tkinterdnd2, os; print(os.path.dirname(tkinterdnd2.__file__))"
+          echo "path=$path" >> $env:GITHUB_OUTPUT
+
+      - name: Build exe
+        working-directory: src
+        run: >
+          pyinstaller --noconfirm --onefile --windowed --name "VideoPreview"
+          --add-data "${{ steps.tkdnd.outputs.path }}/tkdnd/win-x86;tkinterdnd2/tkdnd/win-x86"
+          video_preview_ui.py
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: src/dist/VideoPreview.exe
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
