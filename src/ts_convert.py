@@ -7,6 +7,8 @@ import sys
 import threading
 import time
 
+from video_preview import find_ffmpeg
+
 
 class ConvertError(RuntimeError):
     """Raised on any user-facing error during TS conversion."""
@@ -18,7 +20,7 @@ _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 def convert_ts(
     input_files,
     output_dir,
-    ffmpeg_path="ffmpeg",
+    ffmpeg_path=None,
     log=None,
     on_progress=None,
     stop_event=None,
@@ -39,6 +41,7 @@ def convert_ts(
         log = print
     if on_progress is None:
         on_progress = lambda _: None
+    ffmpeg_path = ffmpeg_path or find_ffmpeg()
 
     os.makedirs(output_dir, exist_ok=True)
     log(f"输出文件夹：{output_dir}")

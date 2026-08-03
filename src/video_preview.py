@@ -2,7 +2,9 @@
 """Generate a preview video by extracting evenly-distributed segments from an mp4 file."""
 
 import argparse
+import glob
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -14,6 +16,32 @@ _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 class PreviewError(RuntimeError):
     """Raised on any user-facing error so callers can handle it without sys.exit."""
+
+
+def find_ffmpeg():
+    """Best-effort resolution of the ffmpeg executable.
+
+    Plain PATH lookup (shutil.which) is unreliable here: a freshly
+    winget-installed ffmpeg only lands in PATH for new processes started
+    after the install, so anything launched by an already-running Explorer
+    (double-click, desktop shortcut) can still miss it. Fall back to the
+    known winget install locations before giving up.
+    """
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    if sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA", "")
+        if local_app_data:
+            link = os.path.join(local_app_data, "Microsoft", "WinGet", "Links", "ffmpeg.exe")
+            if os.path.isfile(link):
+                return link
+            pattern = os.path.join(local_app_data, "Microsoft", "WinGet", "Packages",
+                                   "Gyan.FFmpeg*", "**", "bin", "ffmpeg.exe")
+            matches = glob.glob(pattern, recursive=True)
+            if matches:
+                return matches[0]
+    return "ffmpeg"
 
 
 def _run_cmd(cmd, stop_event=None):
@@ -113,7 +141,7 @@ def generate_preview(
     output=None,
     start_offset=0.0,
     end_offset=0.0,
-    ffmpeg_path="ffmpeg",
+    ffmpeg_path=None,
     log=None,
     on_progress=None,
     stop_event=None,
@@ -129,7 +157,7 @@ def generate_preview(
     if on_progress is None:
         on_progress = lambda _: None
 
-    ffmpeg_bin = ffmpeg_path
+    ffmpeg_bin = ffmpeg_path or find_ffmpeg()
     ffprobe_bin = (
         os.path.join(os.path.dirname(ffmpeg_bin), "ffprobe")
         if os.path.dirname(ffmpeg_bin)
@@ -233,8 +261,8 @@ def main():
                         help="Skip this many seconds at the start of the source video (default: 0)")
     parser.add_argument("--end-offset", type=float, default=0.0,
                         help="Skip this many seconds at the end of the source video (default: 0)")
-    parser.add_argument("--ffmpeg-path", default="ffmpeg",
-                        help="Path to ffmpeg executable (default: ffmpeg from PATH)")
+    parser.add_argument("--ffmpeg-path", default=None,
+                        help="Path to ffmpeg executable (default: auto-detected)")
     args = parser.parse_args()
 
     try:

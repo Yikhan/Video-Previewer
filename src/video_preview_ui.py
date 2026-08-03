@@ -10,7 +10,7 @@ from tkinter import filedialog, ttk
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
 from ts_convert import ConvertError, convert_ts
-from video_preview import PreviewError, build_output_path, generate_preview
+from video_preview import PreviewError, build_output_path, find_ffmpeg, generate_preview
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -111,7 +111,7 @@ class App(TkinterDnD.Tk):
         ff_frame = tk.Frame(self)
         ff_frame.pack(fill="x", padx=16, pady=2)
         tk.Label(ff_frame, text="ffmpeg 路径", font=("Segoe UI", 9)).pack(side="left")
-        self._var_ffmpeg = tk.StringVar(value="ffmpeg")
+        self._var_ffmpeg = tk.StringVar(value=find_ffmpeg())
         tk.Entry(ff_frame, textvariable=self._var_ffmpeg, width=38,
                  font=("Segoe UI", 9)).pack(side="left", padx=(6, 4))
         tk.Button(ff_frame, text="浏览…", command=self._browse_ffmpeg,
@@ -238,7 +238,7 @@ class App(TkinterDnD.Tk):
 
         # Single file: respect the output path field; multiple files: auto-name each
         output_single = self._var_output.get().strip() if len(self._input_paths) == 1 else None
-        ffmpeg = self._var_ffmpeg.get().strip() or "ffmpeg"
+        ffmpeg = self._var_ffmpeg.get().strip() or find_ffmpeg()
 
         self._set_busy(True)
         self._progress["value"] = 0
@@ -336,7 +336,7 @@ class App(TkinterDnD.Tk):
             out_base = ref_dir
         output_dir = os.path.join(out_base, "mp4_output")
 
-        ffmpeg = self._var_ffmpeg.get().strip() or "ffmpeg"
+        ffmpeg = self._var_ffmpeg.get().strip() or find_ffmpeg()
 
         self._set_busy(True)
         self._progress["value"] = 0
